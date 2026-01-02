@@ -616,6 +616,7 @@ These codes control where text appears and how it's animated.
 | **Position Code** | `・XXX` | `・060` | NO | Text position/animation |
 | **Name Placeholder** | `％名％` | `％名％` | SPECIAL | Player's name (keep format) |
 | **UI Marker** | UI text | `選択パネル` | NO | System UI element |
+| **Season/Date Marker** | `名前：X` | `郁人：X`, `透央：X` | NO | Chapter/scene identifier |
 | **System Code** | Technical | `常：91` | NO | Game state value |
 
 #### How to Identify Text Types
@@ -868,7 +869,7 @@ Each script file produces a corresponding JSON file with grouped text entries.
 
 **Text types with `translation` field**: Dialogue, Narration, Inner Thought, Email/Text Message
 
-**Text types WITHOUT `translation` field**: Sound Effect, Sprite Reference, Hashtag Label, Effect Reference, Background Reference, Position Code, Character Name, UI Marker, System Code
+**Text types WITHOUT `translation` field**: Sound Effect, Sprite Reference, Hashtag Label, Effect Reference, Background Reference, Position Code, Character Name, Season/Date Marker, UI Marker, System Code
 
 ---
 

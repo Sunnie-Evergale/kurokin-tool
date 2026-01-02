@@ -97,6 +97,7 @@ python3 compiler.py [original] [translated] [output]
 | Sprite Reference | NO | `ST_N\ikuto_A_1_091` |
 | Hashtag Label | NO | `#KANA` |
 | Character Name | NO | `郁人` |
+| Season/Date Marker | NO | `郁人：X`, `透央：X` |
 
 ## Important Notes
 

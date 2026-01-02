@@ -51,6 +51,15 @@ def detect_text_type(text):
     # System codes (never translate)
     if text.startswith('常：'):
         return ("System Code", False)
+    # Season/Date markers: 郁人：X (character_name：X format)
+    if '：' in text and len(text) <= 10:
+        # Check if it follows the pattern: japanese_name + ： + identifier
+        parts = text.split('：')
+        if len(parts) == 2:
+            name_part = parts[0]
+            # If first part is a short Japanese name (2-4 chars)
+            if len(name_part) <= 6 and any('\u3000' <= c <= '\u9fff' for c in name_part):
+                return ("Season/Date Marker", False)
     if '％名％' in text:
         return ("Name Placeholder", "SPECIAL")
     # Position codes: ・XXX or embedded in sprite refs like kanade_D_2_・079
@@ -208,7 +217,7 @@ def extract_text_from_file_with_newlines(filepath):
                         text_type, translate = detect_text_type(text_clean)
                         # Only capture known system code types (not generic ASCII)
                         if text_type in ("Sprite Reference", "Sound Effect", "Hashtag Label",
-                                         "Effect Reference", "Background Reference"):
+                                         "Effect Reference", "Background Reference", "Season/Date Marker"):
                             results.append((current_line, text_clean, text_type, translate))
                 except:
                     pass
