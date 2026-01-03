@@ -240,8 +240,8 @@ def group_by_line(results):
     for i in range(len(results)):
         line_num, text, text_type, translate = results[i]
 
-        # Check if this is a character name
-        if text_type == "Narration" and len(text) <= 6:
+        # Check if this is a character name (no length limit - allows names with titles like "お兄さん")
+        if text_type == "Narration":
             jp_chars = sum(1 for c in text if '\u3000' <= c <= '\u9fff')
             if jp_chars > 0 and i + 1 < len(results):
                 next_line, next_text, next_type, _ = results[i + 1]
@@ -265,34 +265,47 @@ def group_by_line(results):
         lines[line_key].append(entry)
         max_line = max(max_line, line_num)
 
-    # Post-processing: If any entry on a line is Dialogue, all Narration entries on that line become Dialogue
+    # Post-processing: Convert Narration to Dialogue ONLY if it's between Dialogue entries (split dialogue)
+    # Character Names and other types are not affected
     for line_key in lines:
-        has_dialogue = any(entry["type"] == "Dialogue" for entry in lines[line_key])
-        if has_dialogue:
-            for entry in lines[line_key]:
-                if entry["type"] == "Narration":
-                    entry["type"] = "Dialogue"
+        entries = lines[line_key]
+        for i in range(len(entries)):
+            # Only convert Narration if both previous and next entries are Dialogue
+            if entries[i]["type"] == "Narration":
+                prev_is_dialogue = (i > 0 and entries[i-1]["type"] == "Dialogue")
+                next_is_dialogue = (i + 1 < len(entries) and entries[i+1]["type"] == "Dialogue")
+                if prev_is_dialogue and next_is_dialogue:
+                    entries[i]["type"] = "Dialogue"
 
-    # Post-processing: Merge Name Placeholder into adjacent Dialogue on same line
+    # Post-processing: Handle Name Placeholder entries
     for line_key in lines:
         entries = lines[line_key]
         i = 0
         while i < len(entries):
             if entries[i]["type"] == "Name Placeholder":
-                # Check if previous or next entry is Dialogue
-                merged = False
-                if i > 0 and entries[i-1]["type"] == "Dialogue":
-                    # Merge into previous dialogue
-                    entries[i-1]["original"] += entries[i]["original"]
-                    entries.pop(i)
-                    merged = True
-                elif i + 1 < len(entries) and entries[i+1]["type"] == "Dialogue":
-                    # Merge into next dialogue
-                    entries[i+1]["original"] = entries[i]["original"] + entries[i+1]["original"]
-                    entries.pop(i)
-                    merged = True
-                if not merged:
+                # Check if next entry is Dialogue starting with 「
+                # If so, Name Placeholder is a Character Name (speaker label), not part of dialogue
+                if (i + 1 < len(entries) and
+                    entries[i+1]["type"] == "Dialogue" and
+                    entries[i+1]["original"].startswith("「")):
+                    # Convert to Character Name instead of merging
+                    entries[i]["type"] = "Character Name"
                     i += 1
+                # Otherwise merge into adjacent dialogue (％名％ inside dialogue text)
+                else:
+                    merged = False
+                    if i > 0 and entries[i-1]["type"] == "Dialogue":
+                        # Merge into previous dialogue
+                        entries[i-1]["original"] += entries[i]["original"]
+                        entries.pop(i)
+                        merged = True
+                    elif i + 1 < len(entries) and entries[i+1]["type"] == "Dialogue":
+                        # Merge into next dialogue
+                        entries[i+1]["original"] = entries[i]["original"] + entries[i+1]["original"]
+                        entries.pop(i)
+                        merged = True
+                    if not merged:
+                        i += 1
             else:
                 i += 1
 

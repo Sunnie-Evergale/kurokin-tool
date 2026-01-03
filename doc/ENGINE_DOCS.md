@@ -317,6 +317,47 @@ for line_key in lines:
 ```
 
 **Results**: 102,229 → 101,356 (-873 merged entries)
+
+#### Step 12: Character Name Detection Improvements
+
+**Bug 1**: Long character names with titles (e.g., "ヒーローお兄さん", 8 chars) were not being detected as Character Names due to length limit.
+
+**Bug 2**: Name Placeholder (`％名％`) appearing BEFORE dialogue was incorrectly being merged into dialogue instead of treated as a Character Name (speaker label).
+
+**Examples**:
+```
+Before: [
+  {"type": "Dialogue", "original": "ヒーローお兄さん", "translation": null},  # Wrong!
+  {"type": "Dialogue", "original": "「text」"}
+]
+
+After: [
+  {"type": "Character Name", "original": "ヒーローお兄さん"},  # Correct!
+  {"type": "Dialogue", "original": "「text」", "translation": null}
+]
+```
+
+```
+Before: [
+  {"type": "Dialogue", "original": "％名％「智臣さん……？」", "translation": null}  # Merged
+]
+
+After: [
+  {"type": "Character Name", "original": "％名％"},  # Speaker label
+  {"type": "Dialogue", "original": "「智臣さん……？」", "translation": null}
+]
+```
+
+**Root causes**:
+1. Length limit of `len(text) <= 6` excluded longer names
+2. Post-processing merged ALL Name Placeholders into adjacent dialogue
+3. Binary evidence: `%<name>` pattern (no closing `%`) indicates character name marker
+
+**Solutions**:
+1. Removed length limit - any Japanese text before dialogue becomes Character Name
+2. Added Name Placeholder check: if followed by dialogue with `「`, convert to Character Name
+3. Fixed post-processing to only convert Narration to Dialogue if BETWEEN dialogue entries
+
 **Final accurate count: 101,356 text strings**
 
 ### Final Solution: Text Scanning
@@ -365,7 +406,9 @@ def extract_text_from_file(filepath):
 7. **Control Sequences**: Binary contains control sequences (`0x01 0x01 ... 0x1a`) that must be skipped
 8. **Tab Delimiters**: ASCII patterns like hashtags end with tabs (0x09), must stop there to avoid capturing extra text
 9. **ASCII Prefix**: When SJIS text is preceded by ASCII (like quotes), scan back to include it in extraction
-10. **Post-Processing**: After extraction, group entries by line and merge related entries (Name Placeholders into dialogue)
+10. **Post-Processing**: After extraction, group entries by line and handle special cases
+11. **Character Names**: No length limit - names with titles like "ヒーローお兄さん" are valid
+12. **Name Placeholder Rules**: Before dialogue = Character Name; inside dialogue = merge
 
 ---
 
@@ -607,14 +650,14 @@ These codes control where text appears and how it's animated.
 | **Quote/Written** | `『Text』` inside narration | `『透央が持ってきたやつ』って` | YES | Quote or text on object |
 | **Narration** | Plain text | `何だかリビングの方がうるさい。` | YES | Description/inner thoughts |
 | **Choices** | Plain text + next line has `選択パネル` | `砂糖を探し出して渡す` | YES | Player choice options |
-| **Character Name** | Single Japanese name, next line has dialogue | `郁人` | NO | Speaker identifier |
+| **Character Name** | Japanese name before dialogue (no length limit) | `郁人`, `ヒーローお兄さん`, `％名％` | NO | Speaker identifier |
 | **Sound Effects** | `.wav` | `設備_部屋ドアOP.wav` | NO | Audio file reference |
 | **Sprite Reference** | `ST_N\*` | `ST_N\ikuto_B_1_091` | NO | Character sprite file |
 | **Hashtag Label** | `#*` | `#ikut`, `#KANA` | NO | Character/route identifier |
 | **Effect Reference** | `EFF\*` | `EFF\フラッシュ₂` | NO | Visual effect file |
 | **Background Reference** | `BG\*` | `BG\black` | NO | Background image |
 | **Position Code** | `・XXX` | `・060` | NO | Text position/animation |
-| **Name Placeholder** | `％名％` | `％名％` | SPECIAL | Player's name (keep format) |
+| **Name Placeholder** | `％名％` inside dialogue | Merged into dialogue | SPECIAL | Player's name variable |
 | **UI Marker** | UI text | `選択パネル` | NO | System UI element |
 | **Season/Date Marker** | `名前：X` | `郁人：X`, `透央：X` | NO | Chapter/scene identifier |
 | **System Code** | Technical | `常：91` | NO | Game state value |
@@ -657,10 +700,16 @@ These codes control where text appears and how it's animated.
 - Multiple options appear in sequence
 
 **Character Names (Speaker Labels):**
-- Short Japanese text (2-4 characters)
+- Japanese text (any length) followed by dialogue starting with `「`
 - Names: 郁人, 透央, 岬, etc.
-- Next line is always dialogue (starts with `「`)
+- Names with titles: ヒーローお兄さん (8 chars), お姉さん, etc.
+- Name Placeholder: `％名％` before dialogue becomes Character Name (speaker label)
 - Do NOT translate - use romanization: Ikuto, Tomoomi, Misaki
+
+**Name Placeholder (`％名％`) Rules:**
+- BEFORE dialogue (`％名％「text」`) → Becomes **Character Name** (speaker label)
+- INSIDE dialogue (`「text％名％more」`) → Merged into **Dialogue** text
+- Binary pattern: `%<japanese name>` with NO closing `%` (character name marker)
 
 #### Sentence Fragmentation
 
