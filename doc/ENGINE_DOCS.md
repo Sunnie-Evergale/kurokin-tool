@@ -26,7 +26,7 @@ When examining the game files, I discovered:
 1. **File Structure**: 1,264 binary files without extensions
 2. **File Format**: Kirikiri2 (KAG) bytecode variant used by LittleCheese
 3. **Text Encoding**: Shift-JIS (SJIS) encoding for Japanese text
-4. **Total Text**: 101,356 text strings extracted (final accurate count after all post-processing)
+4. **Total Text**: 101,588 text strings extracted (final accurate count after all post-processing)
 
 ### Decompilation Journey
 
@@ -360,6 +360,80 @@ After: [
 
 **Final accurate count: 101,356 text strings**
 
+#### Step 13: Garbage Entry Removal
+
+**Bug**: Very short Narration entries (garbage like "豐_") appearing on lines with Dialogue.
+
+**Example from y_007d line 2**:
+```
+Before: [
+  {"type": "Narration", "original": "豐_", "translation": null},  # Garbage!
+  {"type": "Name Placeholder", "original": "％名％"},
+  {"type": "Dialogue", "original": "「......会いたい」", "translation": null}
+]
+
+After: [
+  {"type": "Character Name", "original": "％名％"},
+  {"type": "Dialogue", "original": "「......会いたい」", "translation": null}
+]
+```
+
+**Root cause**: Extraction was picking up corrupted/partial text (1-2 characters) that should be filtered out. User rule: "once its dialogue, no narration should exist" on that line.
+
+**Solution**: Remove any Narration entries with ≤2 characters from lines that have Dialogue.
+
+**Result**: 101,356 → 101,527 (+179 entries, due to more Name Placeholders kept as Character Names)
+**Final accurate count: 101,527 text strings**
+
+#### Step 14: Name Placeholder Punctuation Filter
+
+**Bug**: Name Placeholders containing punctuation were being incorrectly converted to Character Name.
+
+**Example from a_006c line 112**:
+```
+Before: [
+  {"type": "Character Name", "original": "琴子"},
+  {"type": "Dialogue", "original": "「あっという間だよ。そもそも一緒に住むって"},
+  {"type": "Character Name", "original": "　ことは――――あっ、％名％は弟くんと一緒"},  # Wrong!
+  {"type": "Dialogue", "original": "　に住んでるから免疫があるね」"}
+]
+
+After: [
+  {"type": "Character Name", "original": "琴子"},
+  {"type": "Dialogue", "original": "「あっいう間だよ。そもそも一緒に住むって　ことは――――あっ、％名％は弟くんと一緒"},
+  {"type": "Dialogue", "original": "　に住んでるから免疫があるね」"}
+]
+```
+
+**Root cause**: Post-processing was converting ALL Name Placeholders on dialogue lines to Character Names, without checking if the Name Placeholder text itself contained punctuation. Entries like `　ことは――――あっ、％名％は弟くんと一緒` (which has `―` punctuation and is clearly dialogue content) were being misclassified.
+
+**Solution**: Added punctuation filter to Name Placeholder post-processing:
+- Clean Name Placeholder (no punctuation/brackets) → Character Name
+- Dirty Name Placeholder (has punctuation/brackets) → Merge into adjacent dialogue
+
+**Result**: False positives eliminated. Dialogue text containing name placeholders is now correctly merged into dialogue entries.
+
+#### Step 15: Name Placeholder Sentence Detection
+
+**Bug**: Full sentences containing `％名％` were being classified as Name Placeholder instead of Narration.
+
+**Example from eyes_y008 line 17**:
+```
+Before:
+  {"type": "Name Placeholder", "original": "％名％のことも、二人の関係も。"}
+
+After:
+  {"type": "Narration", "original": "％名％のことも、二人の関係も。", "translation": null}
+```
+
+**Root cause**: The `detect_text_type()` function immediately classified ANY text containing `％名％` as "Name Placeholder" without checking if it was actually a full sentence. The post-processing logic couldn't fix this because the entry was already misclassified at the initial detection stage.
+
+**Solution**: Updated `detect_text_type()` to only classify short, clean strings as Name Placeholder:
+- `％名％` alone (≤4 chars, no punctuation) → Name Placeholder
+- `％名％のことも、二人の関係も。` (has `。`, longer text) → Falls through to Narration/Dialogue detection
+
+**Result**: 101,527 → 101,588 (+61 entries, full sentences with name placeholders now get translation field)
+
 ### Final Solution: Text Scanning
 
 Instead of full bytecode parsing, implemented a simpler scanning approach:
@@ -393,7 +467,7 @@ def extract_text_from_file(filepath):
 - ✅ Doesn't require perfect opcode parsing
 - ✅ Finds all text regardless of instruction format
 - ✅ Works across different file versions
-- ✅ Extracted 101,356 text strings successfully (final accurate count)
+- ✅ Extracted 101,588 text strings successfully (final accurate count)
 
 ### Key Insights
 
@@ -409,6 +483,10 @@ def extract_text_from_file(filepath):
 10. **Post-Processing**: After extraction, group entries by line and handle special cases
 11. **Character Names**: No length limit - names with titles like "ヒーローお兄さん" are valid
 12. **Name Placeholder Rules**: Before dialogue = Character Name; inside dialogue = merge
+13. **Garbage Filter**: Remove very short Narration (≤2 chars) from lines with Dialogue
+14. **Name Placeholder Punctuation**: Name Placeholders with punctuation/brackets are dialogue content, not speaker labels - merge them
+15. **Name Placeholder Sentences**: Full sentences with `％名％` embedded are narration/dialogue, not name placeholders
+16. **Quality Assurance**: Always run `audit_extraction.py` after modifying `text_extractor.py` to catch regressions
 
 ---
 
@@ -657,7 +735,7 @@ These codes control where text appears and how it's animated.
 | **Effect Reference** | `EFF\*` | `EFF\フラッシュ₂` | NO | Visual effect file |
 | **Background Reference** | `BG\*` | `BG\black` | NO | Background image |
 | **Position Code** | `・XXX` | `・060` | NO | Text position/animation |
-| **Name Placeholder** | `％名％` inside dialogue | Merged into dialogue | SPECIAL | Player's name variable |
+| **Name Placeholder** | `％名％` | Before dialogue → Character Name; inside dialogue → merge | SPECIAL | Player's name variable |
 | **UI Marker** | UI text | `選択パネル` | NO | System UI element |
 | **Season/Date Marker** | `名前：X` | `郁人：X`, `透央：X` | NO | Chapter/scene identifier |
 | **System Code** | Technical | `常：91` | NO | Game state value |
@@ -709,6 +787,7 @@ These codes control where text appears and how it's animated.
 **Name Placeholder (`％名％`) Rules:**
 - BEFORE dialogue (`％名％「text」`) → Becomes **Character Name** (speaker label)
 - INSIDE dialogue (`「text％名％more」`) → Merged into **Dialogue** text
+- Detection: Checks if line has ANY Dialogue (not just immediate next entry)
 - Binary pattern: `%<japanese name>` with NO closing `%` (character name marker)
 
 #### Sentence Fragmentation
@@ -836,8 +915,43 @@ if 0x81 <= byte <= 0x9F or 0xE0 <= byte <= 0xEF:
 ### Running
 
 ```bash
+# Step 1: Extract text
 python3 text_extractor.py [game_dir] [output_dir]
+
+# Step 2: Validate extraction (IMPORTANT - run after any changes to text_extractor.py)
+python3 audit_extraction.py
 ```
+
+### Quality Assurance
+
+The `audit_extraction.py` script validates extraction quality and catches common issues:
+
+**What it checks:**
+- Name Placeholders that are too long (>4 chars) or have punctuation
+- Character Names that are too long (>12 chars) or have punctuation
+- Short Narration entries on Dialogue lines (garbage detection)
+- Name Placeholders on dialogue lines that weren't converted to Character Names
+
+**Output example:**
+```
+Auditing 720 files...
+✓ No issues found!
+```
+
+**If issues are found:**
+```
+Found 15 potential issues:
+
+## Name Placeholder Has Punctuation: 8 occurrences
+  eyes_y008.json:17
+    Text: ％名％のことも、二人の関係も。
+    Issue: Name Placeholder has punctuation (should be clean)
+```
+
+**When to run:**
+- After any modifications to `text_extractor.py`
+- Before committing changes to version control
+- When investigating classification issues
 
 ---
 

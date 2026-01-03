@@ -14,6 +14,9 @@ Tools to extract and translate text from LittleCheese visual novel games.
 # Step 1: Extract all text from game
 python3 text_extractor.py [game_dir] [output_dir]
 
+# Step 1.5: Validate extraction (optional but recommended)
+python3 audit_extraction.py
+
 # Step 2: Translate the JSON files in extracted_texts/
 # - Add "translation" field to translatable entries
 # - Keep UTF-8 encoding
@@ -25,10 +28,15 @@ python3 compiler.py
 ## Features
 
 - **Text Extractor**: Extracts all Japanese text with type classification
-  - 101,356 text strings from 1,264 script files
+  - 101,588 text strings from 1,264 script files
   - JSON output with line grouping and metadata
   - Automatic text type detection (Dialogue, Narration, Sound Effects, etc.)
   - Captures ASCII system codes (sprite refs, hashtags, labels)
+- **Audit Script**: Validates extraction quality
+  - Detects misclassified text types
+  - Flags punctuation in Name Placeholders/Character Names
+  - Identifies potential garbage entries
+  - Run after extractor changes to ensure quality
 - **Compiler**: Simple sequential replacement - replaces text in order
 - Smart text scanning approach (no complex bytecode parsing needed)
 
@@ -37,6 +45,7 @@ python3 compiler.py
 ```
 kurokin-tool/
 ├── text_extractor.py    # Extract text from game binaries
+├── audit_extraction.py  # Validate extraction quality
 ├── compiler.py          # Compile translations (simple sequential)
 ├── compiler_smart.py    # Alternative compiler with auto-shortening
 ├── doc/                 # Technical documentation

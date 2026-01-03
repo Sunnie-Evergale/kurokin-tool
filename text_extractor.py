@@ -61,7 +61,10 @@ def detect_text_type(text):
             if len(name_part) <= 6 and any('\u3000' <= c <= '\u9fff' for c in name_part):
                 return ("Season/Date Marker", False)
     if '％名％' in text:
-        return ("Name Placeholder", "SPECIAL")
+        # Only classify as Name Placeholder if it's short and clean (no sentence punctuation)
+        # Full sentences with ％名％ embedded are narration/dialogue, not name placeholders
+        if len(text) <= 4 and not any(c in text for c in '！？、。！？」」』』―'):
+            return ("Name Placeholder", "SPECIAL")
     # Position codes: ・XXX or embedded in sprite refs like kanade_D_2_・079
     if '・' in text:
         # If it has _・ pattern (e.g., kanade_D_2_・079), it's a sprite reference
@@ -240,10 +243,20 @@ def group_by_line(results):
     for i in range(len(results)):
         line_num, text, text_type, translate = results[i]
 
-        # Check if this is a character name (no length limit - allows names with titles like "お兄さん")
+        # Check if this is a character name
+        # Must be: Japanese text, short (≤12 chars), no Name Placeholder, no brackets, before dialogue
         if text_type == "Narration":
+            # Skip if contains Name Placeholder (that's dialogue, not a name)
+            if '％名％' in text:
+                continue
+            # Skip if contains brackets (dialogue markers)
+            if '「' in text or '」' in text:
+                continue
             jp_chars = sum(1 for c in text if '\u3000' <= c <= '\u9fff')
-            if jp_chars > 0 and i + 1 < len(results):
+            # Check for dialogue punctuation (！？、。！」」 etc.)
+            has_punct = any(c in text for c in '！？、。！？」」―')
+            if (jp_chars > 0 and len(text) <= 12 and not has_punct
+                and i + 1 < len(results)):
                 next_line, next_text, next_type, _ = results[i + 1]
                 if next_line == line_num and "Dialogue" in next_type:
                     text_type = "Character Name"
@@ -280,17 +293,38 @@ def group_by_line(results):
     # Post-processing: Handle Name Placeholder entries
     for line_key in lines:
         entries = lines[line_key]
+        # Check if line has any Dialogue starting with 「
+        line_has_dialogue = any(
+            entry["type"] == "Dialogue" and entry["original"].startswith("「")
+            for entry in entries
+        )
         i = 0
         while i < len(entries):
             if entries[i]["type"] == "Name Placeholder":
-                # Check if next entry is Dialogue starting with 「
-                # If so, Name Placeholder is a Character Name (speaker label), not part of dialogue
-                if (i + 1 < len(entries) and
-                    entries[i+1]["type"] == "Dialogue" and
-                    entries[i+1]["original"].startswith("「")):
-                    # Convert to Character Name instead of merging
-                    entries[i]["type"] = "Character Name"
-                    i += 1
+                # If line has dialogue, Name Placeholder is a Character Name (speaker label)
+                # BUT only if it's clean (no punctuation, brackets, etc.)
+                if line_has_dialogue:
+                    # Check for punctuation in the Name Placeholder text itself
+                    has_punct = any(c in entries[i]["original"] for c in '！？、。！？」」―')
+                    has_brackets = '「' in entries[i]["original"] or '」' in entries[i]["original"]
+                    if not has_punct and not has_brackets:
+                        entries[i]["type"] = "Character Name"
+                        i += 1
+                    else:
+                        # Dirty Name Placeholder (has punctuation) - merge into adjacent dialogue
+                        merged = False
+                        if i > 0 and entries[i-1]["type"] == "Dialogue":
+                            # Merge into previous dialogue
+                            entries[i-1]["original"] += entries[i]["original"]
+                            entries.pop(i)
+                            merged = True
+                        elif i + 1 < len(entries) and entries[i+1]["type"] == "Dialogue":
+                            # Merge into next dialogue
+                            entries[i+1]["original"] = entries[i]["original"] + entries[i+1]["original"]
+                            entries.pop(i)
+                            merged = True
+                        if not merged:
+                            i += 1
                 # Otherwise merge into adjacent dialogue (％名％ inside dialogue text)
                 else:
                     merged = False
@@ -308,6 +342,21 @@ def group_by_line(results):
                         i += 1
             else:
                 i += 1
+
+    # Post-processing: Remove garbage Narration entries from lines that have Dialogue
+    # If a line has Dialogue, any very short Narration (garbage) should be removed
+    for line_key in lines:
+        entries = lines[line_key]
+        has_dialogue = any(entry["type"] == "Dialogue" for entry in entries)
+        if has_dialogue:
+            i = 0
+            while i < len(entries):
+                if (entries[i]["type"] == "Narration" and
+                    len(entries[i]["original"]) <= 2):
+                    # Very short narration on a line with dialogue = garbage, remove it
+                    entries.pop(i)
+                else:
+                    i += 1
 
     return lines, max_line
 
