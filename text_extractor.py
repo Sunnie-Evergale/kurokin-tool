@@ -113,11 +113,13 @@ def extract_text_from_file_with_newlines(filepath):
     results = []
     offset = 0
     current_line = 1
+    last_was_hashtag = False  # Track if we just saw a hashtag label
 
     while offset < len(data):
         # Check for newline - this marks a new line number
         if data[offset] == 0x0A or data[offset] == 0x0D:
             current_line += 1
+            last_was_hashtag = False  # Reset hashtag flag on new line
             offset += 1
             # Skip consecutive newlines
             while offset < len(data) and (data[offset] == 0x0A or data[offset] == 0x0D):
@@ -176,6 +178,21 @@ def extract_text_from_file_with_newlines(filepath):
                     text_clean = ''.join(c for c in text if ord(c) >= 32 or c in '\n\t')
                     if len(text_clean) >= 2 and any('\u3000' <= c <= '\u9fff' for c in text_clean):
                         text_type, translate = detect_text_type(text_clean)
+
+                        # Special handling: if we just saw a hashtag, check if this is a character name
+                        if last_was_hashtag:
+                            jp_chars = sum(1 for c in text_clean if '\u3000' <= c <= '\u9fff')
+                            has_punct = any(c in text_clean for c in '！？、。！？」」』』―')
+                            if (len(text_clean) <= 6 and jp_chars > 0 and not has_punct):
+                                # This is a character name following a hashtag
+                                text_type = "Character Name"
+                                translate = False
+                                last_was_hashtag = False
+
+                        # Track if this is a hashtag label
+                        if text_type == "Hashtag Label":
+                            last_was_hashtag = True
+
                         results.append((current_line, text_clean, text_type, translate))
                 except:
                     pass
@@ -227,6 +244,9 @@ def extract_text_from_file_with_newlines(filepath):
                         # Only capture known system code types (not generic ASCII)
                         if text_type in ("Sprite Reference", "Sound Effect", "Hashtag Label",
                                          "Effect Reference", "Background Reference", "Season/Date Marker"):
+                            # Track hashtag labels for character name detection
+                            if text_type == "Hashtag Label":
+                                last_was_hashtag = True
                             results.append((current_line, text_clean, text_type, translate))
                 except:
                     pass
@@ -259,12 +279,13 @@ def group_by_line(results):
             if '「' in text or '」' in text:
                 continue
             jp_chars = sum(1 for c in text if '\u3000' <= c <= '\u9fff')
-            # Check for dialogue punctuation (！？、。！」」 etc.)
+            # Check for dialogue punctuation (！？、。！？」」 etc.)
             has_punct = any(c in text for c in '！？、。！？」」―')
             if (jp_chars > 0 and len(text) <= 12 and not has_punct
                 and i + 1 < len(results)):
                 next_line, next_text, next_type, _ = results[i + 1]
-                if next_line == line_num and "Dialogue" in next_type:
+                # Check same line OR next consecutive line for dialogue
+                if (next_line == line_num or next_line == line_num + 1) and "Dialogue" in next_type:
                     text_type = "Character Name"
                     translate = False
                     results[i] = (line_num, text, text_type, translate)
@@ -348,24 +369,6 @@ def group_by_line(results):
                         i += 1
             else:
                 i += 1
-
-    # Post-processing: Convert short Narration to Character Name after Hashtag Label
-    # Binary pattern: #hashtag → % → name (where % indicates character name follows)
-    for line_key in lines:
-        entries = lines[line_key]
-        for i in range(len(entries) - 1):
-            # If current entry is Hashtag Label and next is short Narration
-            if (entries[i]["type"] == "Hashtag Label" and
-                entries[i + 1]["type"] == "Narration"):
-                next_text = entries[i + 1]["original"]
-                # Check if it's a short Japanese name (≤6 chars, mostly Japanese, no punctuation)
-                jp_chars = sum(1 for c in next_text if '\u3000' <= c <= '\u9fff')
-                if (len(next_text) <= 6 and jp_chars > 0 and
-                    not any(c in next_text for c in '！？、。！？」」―')):
-                    entries[i + 1]["type"] = "Character Name"
-                    # Remove translation field (Character Names are non-translatable)
-                    if "translation" in entries[i + 1]:
-                        del entries[i + 1]["translation"]
 
     # Post-processing: Remove garbage Narration entries from lines that have Dialogue
     # If a line has Dialogue, any very short Narration (garbage) should be removed

@@ -26,7 +26,7 @@ When examining the game files, I discovered:
 1. **File Structure**: 1,264 binary files without extensions
 2. **File Format**: Kirikiri2 (KAG) bytecode variant used by LittleCheese
 3. **Text Encoding**: Shift-JIS (SJIS) encoding for Japanese text
-4. **Total Text**: 101,588 text strings extracted (final accurate count after all post-processing)
+4. **Total Text**: 102,175 text strings extracted (final accurate count after optimizations)
 
 ### Decompilation Journey
 
@@ -487,6 +487,9 @@ def extract_text_from_file(filepath):
 14. **Name Placeholder Punctuation**: Name Placeholders with punctuation/brackets are dialogue content, not speaker labels - merge them
 15. **Name Placeholder Sentences**: Full sentences with `％名％` embedded are narration/dialogue, not name placeholders
 16. **Quality Assurance**: Always run `audit_extraction.py` after modifying `text_extractor.py` to catch regressions
+17. **Binary Order Pattern**: Scripts follow consistent order: `[Sprite/Background] → [#hashtag] → [Character Name] → [Dialogue]`
+18. **Hashtag Detection**: Character names after hashtags (e.g., `#yuki → 透央`) are classified during extraction using state tracking
+19. **Split Entry Handling**: Character names can be on the previous line from dialogue (line N: name, line N+1: dialogue)
 
 ---
 

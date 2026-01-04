@@ -28,7 +28,7 @@ python3 compiler.py
 ## Features
 
 - **Text Extractor**: Extracts all Japanese text with type classification
-  - 101,588 text strings from 1,264 script files
+  - 102,175 text strings from 1,264 script files
   - JSON output with line grouping and metadata
   - Automatic text type detection (Dialogue, Narration, Sound Effects, etc.)
   - Captures ASCII system codes (sprite refs, hashtags, labels)
