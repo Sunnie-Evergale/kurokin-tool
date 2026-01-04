@@ -290,6 +290,21 @@ def group_by_line(results):
                     translate = False
                     results[i] = (line_num, text, text_type, translate)
 
+    # Filter out garbage character names (CJK + ASCII patterns like 掖0, 梠A, etc.)
+    filtered_results = []
+    for line_num, text, text_type, translate in results:
+        # Check if this is a garbage character name
+        if text_type == "Character Name":
+            # Garbage pattern: CJK char + ASCII digit/letter/symbol (2 chars total)
+            if len(text) == 2:
+                has_cjk = any('\u3000' <= c <= '\u9fff' for c in text)
+                has_ascii = any(c.isascii() and not c.isspace() for c in text)
+                if has_cjk and has_ascii:
+                    # This is garbage, skip it
+                    continue
+        filtered_results.append((line_num, text, text_type, translate))
+    results = filtered_results
+
     # Group by line number
     for line_num, text, text_type, translate in results:
         line_key = str(line_num)
@@ -385,6 +400,86 @@ def group_by_line(results):
                 else:
                     i += 1
 
+    # Post-processing: Handle ％名％ after Hashtag Labels as Character Name
+    # After garbage removal, check if any ％名％ entries follow hashtags
+    for line_key in lines:
+        entries = lines[line_key]
+        last_was_hashtag = False
+        for i in range(len(entries)):
+            entry = entries[i]
+            if entry.get("type") == "Hashtag Label":
+                last_was_hashtag = True
+            elif last_was_hashtag and entry.get("original") == "％名％":
+                # This ％名％ follows a hashtag, should be Character Name
+                entry["type"] = "Character Name"
+                last_was_hashtag = False
+            else:
+                last_was_hashtag = False
+
+    # Post-processing: Merge split dialogue across entries
+    # Binary stores long dialogue as multiple entries; only first has 「 bracket
+    break_types = {"Character Name", "Hashtag Label", "Sprite Reference", "Background Reference", "Effect Reference"}
+
+    for line_key in sorted(lines.keys(), key=int):
+        entries = lines[line_key]
+        for i in range(len(entries)):
+            entry = entries[i]
+            # Find incomplete dialogue (starts with 「 but doesn't end with 」)
+            if (entry.get("type") == "Dialogue" and
+                entry["original"].startswith("「") and
+                not entry["original"].endswith("」")):
+
+                merged_text = entry["original"]
+                current_line = int(line_key)
+                current_idx = i + 1
+                found_end = False
+
+                # Look ahead for continuation parts
+                while True:
+                    # Check next entry on current line
+                    line_entries = lines.get(str(current_line), [])
+                    if current_idx < len(line_entries):
+                        next_entry = line_entries[current_idx]
+
+                        # Stop at break markers
+                        if next_entry.get("type") in break_types:
+                            break
+
+                        next_text = next_entry.get("original", "")
+
+                        # Stop if we hit another dialogue with opening bracket
+                        if next_text.startswith("「"):
+                            break
+
+                        # Check if this is continuation (no brackets, or ends with 」)
+                        if not next_text.startswith("「") and not next_text.startswith("『"):
+                            # Merge the text
+                            merged_text += next_text
+                            next_entry["_remove"] = True  # Mark for removal
+
+                            # Found the end?
+                            if next_text.endswith("」"):
+                                found_end = True
+                                break
+
+                            current_idx += 1
+                            continue
+
+                        break
+                    else:
+                        # Move to next line
+                        current_line += 1
+                        current_idx = 0
+                        if str(current_line) not in lines:
+                            break
+
+                if found_end or merged_text != entry["original"]:
+                    entry["original"] = merged_text
+
+    # Remove entries marked for deletion
+    for line_key in lines:
+        lines[line_key] = [e for e in lines[line_key] if not e.pop("_remove", False)]
+
     return lines, max_line
 
 def add_continuation_flags(lines):
@@ -439,6 +534,9 @@ def add_continuation_flags(lines):
     # Track with (line_key, entry_index, entry) tuples
     merged_chains = []
 
+    # Types that break continuation across lines
+    break_types = {"Character Name", "Hashtag Label", "Sprite Reference", "Background Reference", "Effect Reference"}
+
     for line_num in sorted(chains.keys()):
         line_key = str(line_num)
 
@@ -454,12 +552,37 @@ def add_continuation_flags(lines):
             if merged_chains:
                 last_chain = merged_chains[-1]
                 last_type = last_chain[-1][2].get("type")
+                last_line = int(last_chain[-1][0])  # Line number of last entry in chain
+
+                # Check if there are intermediate lines between last_line and current line_num
+                # ANY line gap breaks continuation (including missing/empty lines)
+                if line_num - last_line > 1:
+                    # Can't connect across gap, start new chain
+                    merged_chains.append(tracked_chain)
+                    continue
 
                 # If same type and this is the first chain in current line
+                # Also check: don't merge if previous chain ends with sentence-ending punctuation
+                # Also check: don't merge if current line has break markers before this entry
+                last_entry_text = last_chain[-1][2].get("original", "")
+                ends_with_sentence = last_entry_text[-1] if last_entry_text else ""
+                # Sentence enders for narration, dialogue closing bracket for dialogue
+                sentence_enders = ('。', '！', '？', '…', '!', '?', '.', '」')
+
+                # Check if there are break markers before this entry in current line
+                chain_first_idx = chain[0][0]  # First entry index in this chain
+                has_break_before = False
+                for i in range(chain_first_idx):
+                    if lines[line_key][i].get("type") in break_types:
+                        has_break_before = True
+                        break
+
                 if (last_type == entry_type and
                     entry_type in translatable_types and
                     len(chain) == 1 and  # Only merge single-entry chains across lines
-                    (not merged_chains or merged_chains[-1][-1][0] != line_key)):
+                    (not merged_chains or merged_chains[-1][-1][0] != line_key) and
+                    ends_with_sentence not in sentence_enders and  # Don't merge if sentence complete
+                    not has_break_before):  # Don't merge if break markers before this entry
                     # Extend the last chain
                     merged_chains[-1].extend(tracked_chain)
                     continue

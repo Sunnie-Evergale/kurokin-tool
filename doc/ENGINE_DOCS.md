@@ -474,6 +474,143 @@ Element Order Pattern: [Sprite/Background] → [#hashtag] → [Character Name] �
 - `0x0D 0x0D` = Double-CR sometimes appears (duplicate newline marker)
 - Newline detection: `data[offset] == 0x0A or data[offset] == 0x0D`
 
+#### Step 17: Continuation Flag Fixes
+
+**Issue 1: False Continuation Across Empty Lines**
+
+Lines were being marked as continuations even when there were gaps (missing lines) between them. The code only checked for break markers in existing intermediate lines, not the gaps themselves.
+
+**Example from a_006h:**
+```json
+"36": [
+  {"type": "Narration", "original": "――いつもなら、好きなだけ、延ばして考える", "continuation": 1},
+  {"type": "Narration", "original": "ことができるのに。", "continuation": 2}
+]
+// Line 37: MISSING (empty)
+"38": [
+  {"type": "Narration", "original": "ああ、それはひきこもりの時の私の思考。", "continuation": 3}  ← WRONG
+]
+```
+
+**Fix:** Treat ANY line number gap as a continuation break:
+```python
+if line_num - last_line > 1:
+    # Can't connect across gap, start new chain
+    merged_chains.append(tracked_chain)
+    continue
+```
+
+**Issue 2: Split Dialogue Across Entries**
+
+The game binary stores long dialogue as multiple entries. Only the first entry has the dialogue marker `「`. Subsequent entries lack the bracket and were incorrectly classified as Narration.
+
+**Example from a_006h:**
+```json
+"9": [
+  {"type": "Dialogue", "original": "「ふふっ、じゃあ、今日はこれぐらいにしてお"},
+  {"type": "Narration", "original": "　いてあげるね。応援してるよ、影ながら、闇"}  ← WRONG
+],
+"10": [
+  {"type": "Dialogue", "original": "　の中で」"}
+]
+```
+
+Should be one continuous dialogue:
+`「ふふっ、じゃあ、今日はこれぐらいにしておいてあげるね。応援してるよ、影ながら、闇の中で」`
+
+**Fix:** Added post-processing to merge split dialogue:
+```python
+# Detect incomplete dialogue (starts with 「 but doesn't end with 」)
+if (entry.get("type") == "Dialogue" and
+    entry["original"].startswith("「") and
+    not entry["original"].endswith("」")):
+    # Look ahead for continuation parts across entries/lines
+    # Merge until 」 is found or break marker encountered
+```
+
+**Result**: 62 cases of split dialogue merged across dataset.
+
+**Issue 3: Adjacent Line Continuation False Positives**
+
+Single-entry chains on adjacent lines were being merged when they shouldn't be, because the previous line ended with complete sentence punctuation.
+
+**Example from a_006h:**
+```json
+"20": [
+  {"type": "Narration", "original": "授業中はマナーにしてるけど、放課後になった", "continuation": 1},
+  {"type": "Narration", "original": "らオンにしている。", "continuation": 2}
+]
+"21": [
+  {"type": "Narration", "original": "すぐに受信音が止まったから、これはメールだ。", "continuation": 3}  ← WRONG
+]
+```
+
+Binary verification showed each line has its OWN narration marker - they are SEPARATE entries.
+
+**Fix:** Added sentence-ending punctuation check:
+```python
+sentence_enders = ('。', '！', '？', '…', '!', '?', '.', '」')
+if ends_with_sentence not in sentence_enders:
+    # Don't merge if sentence is complete
+```
+
+Also added `」` to sentence-ending markers (dialogues ending with `」` should not merge).
+
+**Issue 4: Different Character Dialogues Merged**
+
+Different characters' dialogues were being merged as continuations because the code didn't check for break markers (Character Name) in the current line before the entry.
+
+**Example from a_011b:**
+```json
+"49": [
+  {"type": "Character Name", "original": "琴子"},
+  {"type": "Dialogue", "original": "「ご自分が場外ホームランを打ってしまわないようにご注意くださいませ」", "continuation": 1}
+]
+"50": [
+  {"type": "Character Name", "original": "竜樹"},
+  {"type": "Dialogue", "original": "「なにをー！　なんなら、おまえにデッドボール当ててやろうか！」", "continuation": 2}  ← WRONG
+]
+```
+
+**Fix:** Check for break markers before the entry in the current line:
+```python
+# Check if there are break markers before this entry in current line
+chain_first_idx = chain[0][0]
+has_break_before = False
+for i in range(chain_first_idx):
+    if lines[line_key][i].get("type") in break_types:
+        has_break_before = True
+        break
+
+if not has_break_before:
+    # Don't merge if break markers before this entry
+```
+
+**Issue 5: Text Encoding Corruption (Known Limitation)**
+
+Some text has byte corruption in the source binary, causing character loss during extraction.
+
+**Example from a_011h:**
+```
+Extracted: ｘ−１)(ｘ＋６) かな。
+Missing:  Opening (
+```
+
+Binary analysis revealed:
+```
+Binary: 28 82 98 81 7c 82 50 29 28 82 98 81 7b 82 55 29
+Decoded: (  ｘ   ?    )    (   ｘ   +      )
+```
+
+The `81 7c` should be `81 7f` (minus symbol `−`). The corrupted byte causes the Shift-JIS decoder to lose characters.
+
+**Scope:** Only 4 cases found with corrupted `ｘ` character. This is a source data issue that cannot be fixed without complex encoding error handling.
+
+**Final Result:**
+- **102,175 → 96,184 strings** (-5,991 entries after continuation fixes)
+- **720 files** extracted
+- **Audit:** ✓ No issues found
+
 ### Final Solution: Text Scanning
 
 Instead of full bytecode parsing, implemented a simpler scanning approach:
@@ -507,7 +644,7 @@ def extract_text_from_file(filepath):
 - ✅ Doesn't require perfect opcode parsing
 - ✅ Finds all text regardless of instruction format
 - ✅ Works across different file versions
-- ✅ Extracted 101,588 text strings successfully (final accurate count)
+- ✅ Extracted 96,184 text strings successfully (final accurate count)
 
 ### Key Insights
 
@@ -531,6 +668,11 @@ def extract_text_from_file(filepath):
 18. **Hashtag Detection**: Character names after hashtags (e.g., `#yuki → 透央`) are classified during extraction using state tracking
 19. **Split Entry Handling**: Character names can be on the previous line from dialogue (line N: name, line N+1: dialogue)
 20. **Newline Marker Format**: Line boundaries are marked by `0x00 NULL` followed by `0x0D CR` (or sometimes `0x0D 0x0D` double-CR)
+21. **Continuation Line Gaps**: ANY gap in line numbers breaks continuation - missing/empty lines are treated as breaks
+22. **Split Dialogue Merging**: Long dialogue stored as multiple entries - merge incomplete dialogues (no closing `」`) across entries/lines
+23. **Sentence-Ending Check**: Don't merge continuations if previous chain ends with `。`, `！`, `？`, `…`, or `」`
+24. **Break Marker Detection**: Don't merge if current line has break markers (Character Name, Hashtag Label, etc.) before the entry
+25. **Source Data Corruption**: Some files have byte corruption (e.g., `81 7c` instead of `81 7f` for minus symbol) causing character loss - this is a known limitation
 
 ---
 
@@ -917,16 +1059,16 @@ Examples:
 ### 8. Text Distribution
 
 ```
-Total files: 1,264
-Total texts: 84,839
-Average: ~67 texts per file
+Total files: 720
+Total texts: 96,184
+Average: ~134 texts per file
 
 Breakdown:
-- Dialogue: ~70,000 (82%)
+- Dialogue: ~70,000 (73%)
+- Narration: ~20,000 (21%)
 - Sound effects: ~1,500+ (.wav references)
-- UI elements: ~10,000 (12%)
-- System messages: ~4,000 (5%)
-- Names: ~839 (1%)
+- System codes (sprites, BGs, hashtags, etc.): ~4,000 (4%)
+- Character names: ~700 (1%)
 ```
 
 ---

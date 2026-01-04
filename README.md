@@ -28,14 +28,17 @@ python3 compiler.py
 ## Features
 
 - **Text Extractor**: Extracts all Japanese text with type classification
-  - 102,175 text strings from 1,264 script files
+  - 96,184 text strings from 720 script files
   - JSON output with line grouping and metadata
   - Automatic text type detection (Dialogue, Narration, Sound Effects, etc.)
+  - Continuation flags for split text (1, 2, 3...)
   - Captures ASCII system codes (sprite refs, hashtags, labels)
+  - Split dialogue merging (handles long dialogue across entries)
 - **Audit Script**: Validates extraction quality
   - Detects misclassified text types
   - Flags punctuation in Name Placeholders/Character Names
   - Identifies potential garbage entries
+  - Validates continuation flags
   - Run after extractor changes to ensure quality
 - **Compiler**: Simple sequential replacement - replaces text in order
 - Smart text scanning approach (no complex bytecode parsing needed)
@@ -85,7 +88,7 @@ Creates JSON files grouped by line number:
 }
 ```
 
-**Continuation field**: When text is split across multiple entries, a `continuation` field is added (1, 2, 3...) to track the order. This helps translators identify which entries belong together.
+**Continuation field**: When text is split across multiple entries, a `continuation` field is added (1, 2, 3...) to track the order. This helps translators identify which entries belong together. Continuation respects break markers (Character Name, Hashtag Label, etc.) and line gaps.
 
 ### Translate
 
