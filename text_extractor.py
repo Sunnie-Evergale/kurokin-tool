@@ -51,6 +51,12 @@ def detect_text_type(text):
     # System codes (never translate)
     if text.startswith('常：'):
         return ("System Code", False)
+    # Full-width ASCII text (UI system text) - check if primarily full-width Latin
+    # Full-width range: U+FF01-U+FF5E (！ to ￜ)
+    fullwidth_count = sum(1 for c in text if '\uff01' <= c <= '\uff5e')
+    if fullwidth_count > 0 and fullwidth_count >= len(text) * 0.5:
+        # 50%+ full-width chars = UI system text
+        return ("System Code", False)
     # Season/Date markers: 郁人：X (character_name：X format)
     if '：' in text and len(text) <= 10:
         # Check if it follows the pattern: japanese_name + ： + identifier
@@ -342,6 +348,24 @@ def group_by_line(results):
                         i += 1
             else:
                 i += 1
+
+    # Post-processing: Convert short Narration to Character Name after Hashtag Label
+    # Binary pattern: #hashtag → % → name (where % indicates character name follows)
+    for line_key in lines:
+        entries = lines[line_key]
+        for i in range(len(entries) - 1):
+            # If current entry is Hashtag Label and next is short Narration
+            if (entries[i]["type"] == "Hashtag Label" and
+                entries[i + 1]["type"] == "Narration"):
+                next_text = entries[i + 1]["original"]
+                # Check if it's a short Japanese name (≤6 chars, mostly Japanese, no punctuation)
+                jp_chars = sum(1 for c in next_text if '\u3000' <= c <= '\u9fff')
+                if (len(next_text) <= 6 and jp_chars > 0 and
+                    not any(c in next_text for c in '！？、。！？」」―')):
+                    entries[i + 1]["type"] = "Character Name"
+                    # Remove translation field (Character Names are non-translatable)
+                    if "translation" in entries[i + 1]:
+                        del entries[i + 1]["translation"]
 
     # Post-processing: Remove garbage Narration entries from lines that have Dialogue
     # If a line has Dialogue, any very short Narration (garbage) should be removed

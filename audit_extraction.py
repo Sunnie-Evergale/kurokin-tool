@@ -85,6 +85,24 @@ def check_file(filepath):
                         'issue': 'Clean Name Placeholder on dialogue line (should be Character Name?)'
                     })
 
+            # Rule 5: Narration after Hashtag Label should be Character Name
+            # Binary pattern: #hashtag → % → name
+            if text_type == "Hashtag Label" and i + 1 < len(entries):
+                next_entry = entries[i + 1]
+                if next_entry.get('type') == "Narration":
+                    next_text = next_entry.get('original', '')
+                    # Check if it's a short Japanese name (≤6 chars, mostly Japanese, no punctuation)
+                    jp_chars = sum(1 for c in next_text if '\u3000' <= c <= '\u9fff')
+                    if (len(next_text) <= 6 and jp_chars > 0 and
+                        not any(c in next_text for c in '！？、。！？」」』』―')):
+                        issues.append({
+                            'file': filepath.name,
+                            'line': line_num,
+                            'type': 'Narration After Hashtag Should Be Character Name',
+                            'text': next_text,
+                            'issue': f'Short Japanese name "{next_text}" after Hashtag Label (should be Character Name)'
+                        })
+
     return issues
 
 def main():
