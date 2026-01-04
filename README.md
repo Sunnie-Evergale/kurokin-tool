@@ -71,6 +71,10 @@ Creates JSON files grouped by line number:
     "1": [
       {"type": "Narration", "original": "日常：105", "translation": null},
       {"type": "Dialogue", "original": "「こんにちは」", "translation": null}
+    ],
+    "2": [
+      {"type": "Narration", "original": "もっとちゃんとお礼も言いたいけど、帰りが遅", "translation": null, "continuation": 1},
+      {"type": "Narration", "original": "くなるのはよくないかも。", "translation": null, "continuation": 2}
     ]
   },
   "metadata": {
@@ -80,6 +84,8 @@ Creates JSON files grouped by line number:
   }
 }
 ```
+
+**Continuation field**: When text is split across multiple entries, a `continuation` field is added (1, 2, 3...) to track the order. This helps translators identify which entries belong together.
 
 ### Translate
 

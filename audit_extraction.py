@@ -103,6 +103,18 @@ def check_file(filepath):
                             'issue': f'Short Japanese name "{next_text}" after Hashtag Label (should be Character Name)'
                         })
 
+            # Rule 6: Continuation flags validation
+            if "continuation" in entry:
+                cont_num = entry.get("continuation")
+                if not isinstance(cont_num, int) or cont_num < 1:
+                    issues.append({
+                        'file': filepath.name,
+                        'line': line_num,
+                        'type': 'Invalid Continuation Number',
+                        'text': original,
+                        'issue': f'Continuation must be positive integer, got {cont_num}'
+                    })
+
     return issues
 
 def main():

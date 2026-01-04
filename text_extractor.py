@@ -387,6 +387,96 @@ def group_by_line(results):
 
     return lines, max_line
 
+def add_continuation_flags(lines):
+    """
+    Add continuation flags to split text entries.
+    - continuation: 1, 2, 3... for split parts
+    - No field for standalone entries
+    Handles both within-line and across-line continuations.
+    """
+    translatable_types = {"Dialogue", "Narration", "Inner Thought", "Email/Text Message"}
+
+    # Step 1: Build chains within each line
+    # chains[line_num] = list of chains, where each chain = [(idx, entry), ...]
+    chains = {}
+    for line_key in lines:
+        line_num = int(line_key)
+        entries = lines[line_key]
+        chains[line_num] = []
+
+        current_chain = []
+        current_type = None
+
+        for i, entry in enumerate(entries):
+            entry_type = entry.get("type")
+
+            if entry_type in translatable_types:
+                if current_type is None:
+                    # Start new chain
+                    current_type = entry_type
+                    current_chain = [(i, entry)]
+                elif entry_type == current_type:
+                    # Continue chain
+                    current_chain.append((i, entry))
+                else:
+                    # Type changed, save old chain and start new
+                    if len(current_chain) >= 1:
+                        chains[line_num].append((current_type, current_chain))
+                    current_type = entry_type
+                    current_chain = [(i, entry)]
+            else:
+                # Non-translatable breaks chain
+                if len(current_chain) >= 1:
+                    chains[line_num].append((current_type, current_chain))
+                current_type = None
+                current_chain = []
+
+        # Don't forget last chain
+        if len(current_chain) >= 1:
+            chains[line_num].append((current_type, current_chain))
+
+    # Step 2: Connect chains across line boundaries
+    # Track with (line_key, entry_index, entry) tuples
+    merged_chains = []
+
+    for line_num in sorted(chains.keys()):
+        line_key = str(line_num)
+
+        if not chains[line_num]:
+            continue
+
+        # Process each chain in this line
+        for entry_type, chain in chains[line_num]:
+            # Convert to tracked format
+            tracked_chain = [(line_key, idx, entry) for idx, entry in chain]
+
+            # Check if we can extend the last merged chain
+            if merged_chains:
+                last_chain = merged_chains[-1]
+                last_type = last_chain[-1][2].get("type")
+
+                # If same type and this is the first chain in current line
+                if (last_type == entry_type and
+                    entry_type in translatable_types and
+                    len(chain) == 1 and  # Only merge single-entry chains across lines
+                    (not merged_chains or merged_chains[-1][-1][0] != line_key)):
+                    # Extend the last chain
+                    merged_chains[-1].extend(tracked_chain)
+                    continue
+
+            # Can't extend, start new chain
+            merged_chains.append(tracked_chain)
+
+    # Step 3: Apply continuation numbers
+    for chain in merged_chains:
+        if len(chain) <= 1:
+            continue  # Skip single-entry chains (no continuation needed)
+
+        for idx, (line_key, entry_index, entry) in enumerate(chain, start=1):
+            lines[line_key][entry_index]["continuation"] = idx
+
+    return lines
+
 def extract_all_texts(input_dir, output_dir):
     """Extract text from all script files"""
     input_path = Path(input_dir)
@@ -405,6 +495,8 @@ def extract_all_texts(input_dir, output_dir):
         try:
             raw_results, total_lines = extract_text_from_file_with_newlines(filepath)
             lines, _ = group_by_line(raw_results)
+            # Add continuation flags AFTER all post-processing
+            lines = add_continuation_flags(lines)
 
             if not lines:
                 continue

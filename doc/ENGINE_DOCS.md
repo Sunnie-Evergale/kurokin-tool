@@ -434,6 +434,46 @@ After:
 
 **Result**: 101,527 → 101,588 (+61 entries, full sentences with name placeholders now get translation field)
 
+#### Step 16: Binary Pattern Analysis & Optimizations
+
+**Binary Structure Discovery:**
+
+Through deep analysis of the binary format, we discovered consistent patterns in how the game engine structures script data:
+
+```
+Line Boundary Pattern: [Text] → [0x00 NULL] → [0x0D CR] → [Next Line Text]
+Element Order Pattern: [Sprite/Background] → [#hashtag] → [Character Name] → [Dialogue]
+```
+
+**Example from a_001 binary (offset 0xa77):**
+```
+...「また、パジャマかよ……あんた、いつまで寝 [0x00 0x0D newline] 　る気？」...
+```
+
+**Optimizations Made:**
+
+1. **Hashtag → Character Name during extraction** (lines 182-194, 248-250)
+   - Added `last_was_hashtag` state tracking
+   - Classifies character names immediately after hashtags
+   - Eliminated one post-processing pass
+
+2. **Split Entry Detection** (line 288)
+   - Extended to handle dialogue on next consecutive line
+   - Changed: `if next_line == line_num`
+   - To: `if (next_line == line_num or next_line == line_num + 1)`
+
+3. **Full-width ASCII Detection** (lines 54-59)
+   - Added detection for UI text using full-width characters
+   - Pattern: 50%+ full-width Latin characters → System Code
+
+**Result**: 101,588 → 102,175 (+587 entries due to improved classification)
+
+**Key Binary Insights:**
+- `0x00` = NULL byte terminates text strings
+- `0x0D` = CR (Carriage Return) marks line boundaries
+- `0x0D 0x0D` = Double-CR sometimes appears (duplicate newline marker)
+- Newline detection: `data[offset] == 0x0A or data[offset] == 0x0D`
+
 ### Final Solution: Text Scanning
 
 Instead of full bytecode parsing, implemented a simpler scanning approach:
@@ -490,6 +530,7 @@ def extract_text_from_file(filepath):
 17. **Binary Order Pattern**: Scripts follow consistent order: `[Sprite/Background] → [#hashtag] → [Character Name] → [Dialogue]`
 18. **Hashtag Detection**: Character names after hashtags (e.g., `#yuki → 透央`) are classified during extraction using state tracking
 19. **Split Entry Handling**: Character names can be on the previous line from dialogue (line N: name, line N+1: dialogue)
+20. **Newline Marker Format**: Line boundaries are marked by `0x00 NULL` followed by `0x0D CR` (or sometimes `0x0D 0x0D` double-CR)
 
 ---
 
@@ -999,17 +1040,20 @@ Each script file produces a corresponding JSON file with grouped text entries.
       {
         "type": "Dialogue",
         "original": "「この後、実行委員会の集まりがあるから、３",
-        "translation": null
+        "translation": null,
+        "continuation": 1
       },
       {
         "type": "Dialogue",
         "original": "　人は俺の話が終わったらすぐ１階のＡクラス",
-        "translation": null
+        "translation": null,
+        "continuation": 2
       },
       {
         "type": "Dialogue",
         "original": "　に行くように」",
-        "translation": null
+        "translation": null,
+        "continuation": 3
       }
     ]
   },
@@ -1029,6 +1073,7 @@ Each script file produces a corresponding JSON file with grouped text entries.
 | `type` | String | Text type (Dialogue, Narration, Sound Effect, etc.) - see Text Types section |
 | `original` | String | Original Japanese text |
 | `translation` | String/null | Translation field (only present for translatable entries, initially `null`) |
+| `continuation` | Number | Optional. Sequential number (1, 2, 3...) for split text entries. Only present when text continues across multiple entries. |
 | `metadata.file` | String | Source script filename |
 | `metadata.total_lines` | Number | Total line count in script |
 | `metadata.translatable` | Number | Count of entries that should be translated |
@@ -1036,6 +1081,39 @@ Each script file produces a corresponding JSON file with grouped text entries.
 **Text types with `translation` field**: Dialogue, Narration, Inner Thought, Email/Text Message
 
 **Text types WITHOUT `translation` field**: Sound Effect, Sprite Reference, Hashtag Label, Effect Reference, Background Reference, Position Code, Character Name, Season/Date Marker, UI Marker, System Code
+
+**Continuation field**:
+
+The `continuation` field marks text that is split across multiple entries. This happens when:
+- A single dialogue or narration spans multiple lines in the script
+- Text is broken into smaller chunks for display
+
+**Example**: Split dialogue across 3 entries
+```json
+{
+  "type": "Dialogue",
+  "original": "「この後、実行委員会の集まりがあるから、３",
+  "translation": null,
+  "continuation": 1
+},
+{
+  "type": "Dialogue",
+  "original": "　人は俺の話が終わったらすぐ１階のＡクラス",
+  "translation": null,
+  "continuation": 2
+},
+{
+  "type": "Dialogue",
+  "original": "　に行くように」",
+  "translation": null,
+  "continuation": 3
+}
+```
+
+When translating split entries, translators should:
+1. Translate each part maintaining the split structure
+2. Ensure the translated text flows naturally when parts are combined
+3. Keep the same number of continuation entries (don't merge or split)
 
 ---
 
